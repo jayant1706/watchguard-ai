@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "WatchGuard AI Bridge",
+  "version": "1.1",
+  "description": "Connects your browser video to WatchGuard AI for position tracking and seek control.",
+  "permissions": ["storage", "tabs", "activeTab"],
+  "host_permissions": ["<all_urls>", "ws://localhost/*", "ws://127.0.0.1/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "WatchGuard AI Bridge"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src ws://localhost:8765 ws://127.0.0.1:8765"
+  },
+  "icons": {
+    "16":  "icon16.png",
+    "48":  "icon48.png",
+    "128": "icon128.png"
+  }
+}

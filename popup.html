@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body {
+    width: 280px;
+    font-family: 'Courier New', monospace;
+    background: #0d0d0f;
+    color: #e8e8ec;
+    margin: 0;
+    padding: 0;
+  }
+  .header {
+    background: #00e676;
+    color: #0d0d0f;
+    font-weight: bold;
+    font-size: 14px;
+    padding: 10px 14px;
+  }
+  .body { padding: 12px 14px; }
+  .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    font-size: 11px;
+  }
+  .label { color: #5a5c6a; }
+  .value { font-weight: bold; }
+  .green { color: #00e676; }
+  .red   { color: #ff4444; }
+  .yellow{ color: #ffc107; }
+  .divider { border-top: 1px solid #16181e; margin: 10px 0; }
+  .tip {
+    font-size: 9px;
+    color: #5a5c6a;
+    line-height: 1.6;
+    margin-top: 8px;
+  }
+  #status-dot { font-size: 16px; }
+</style>
+</head>
+<body>
+<div class="header">⬡ WatchGuard AI Bridge</div>
+<div class="body">
+  <div class="row">
+    <span class="label">Python App</span>
+    <span class="value" id="py-status">Checking...</span>
+  </div>
+  <div class="row">
+    <span class="label">Video Detected</span>
+    <span class="value" id="video-status">—</span>
+  </div>
+  <div class="row">
+    <span class="label">Current Position</span>
+    <span class="value" id="position">—</span>
+  </div>
+  <div class="row">
+    <span class="label">Page</span>
+    <span class="value" id="page-title" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">—</span>
+  </div>
+  <div class="divider"></div>
+  <div class="tip">
+    Make sure WatchGuard AI is running on your PC.<br>
+    The extension auto-connects to ws://localhost:8765.
+  </div>
+</div>
+<script src="popup.js"></script>
+</body>
+</html>
