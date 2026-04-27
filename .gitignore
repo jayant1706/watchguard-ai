@@ -1,1 +1,4 @@
 Dummy_Project/__pycache__
+*.pyc
+.env
+.log

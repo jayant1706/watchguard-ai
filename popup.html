@@ -2,70 +2,284 @@
 <html>
 <head>
 <meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet">
 <style>
+  :root {
+    --bg:        #080b12;
+    --surface:   #0e1220;
+    --border:    #1a2035;
+    --accent:    #7cffb2;
+    --accent2:   #4fd9ff;
+    --accent3:   #b57bff;
+    --fg:        #dde4f5;
+    --muted:     #3a4260;
+    --red:       #ff5c7a;
+    --green:     #7cffb2;
+    --yellow:    #ffd97a;
+    --glow:      rgba(124, 255, 178, 0.18);
+    --glow2:     rgba(79, 217, 255, 0.12);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
   body {
     width: 280px;
-    font-family: 'Courier New', monospace;
-    background: #0d0d0f;
-    color: #e8e8ec;
-    margin: 0;
-    padding: 0;
+    font-family: 'DM Mono', monospace;
+    background: var(--bg);
+    color: var(--fg);
+    overflow: hidden;
   }
+
+  /* ── Noise grain overlay ── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 100;
+    opacity: 0.5;
+  }
+
+  /* ── Header ── */
   .header {
-    background: #00e676;
-    color: #0d0d0f;
-    font-weight: bold;
-    font-size: 14px;
-    padding: 10px 14px;
+    position: relative;
+    background: linear-gradient(135deg, #0e1525 0%, #111a2e 100%);
+    padding: 13px 14px 11px;
+    border-bottom: 1px solid var(--border);
+    overflow: hidden;
   }
-  .body { padding: 12px 14px; }
+
+  .header::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--accent), var(--accent2), transparent);
+    opacity: 0.6;
+  }
+
+  /* Ambient glow blob */
+  .header-glow {
+    position: absolute;
+    top: -20px; right: -20px;
+    width: 90px; height: 90px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(124,255,178,0.15) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  .header-inner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    position: relative;
+  }
+
+  .logo-hex {
+    width: 26px; height: 26px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+    filter: drop-shadow(0 0 6px var(--accent));
+    animation: pulse-glow 2.8s ease-in-out infinite;
+    color: var(--accent);
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% { filter: drop-shadow(0 0 4px var(--accent)); opacity: 1; }
+    50%       { filter: drop-shadow(0 0 10px var(--accent)) drop-shadow(0 0 20px var(--accent2)); opacity: 0.85; }
+  }
+
+  .header-text {}
+  .header-title {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 12.5px;
+    letter-spacing: 0.04em;
+    color: var(--fg);
+    line-height: 1;
+  }
+  .header-sub {
+    font-size: 8.5px;
+    color: var(--muted);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
+
+  /* ── Body ── */
+  .body {
+    padding: 13px 14px 12px;
+    background: var(--bg);
+  }
+
+  /* ── Row cards ── */
   .row {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 8px;
-    font-size: 11px;
+    margin-bottom: 6px;
+    font-size: 10.5px;
+    padding: 7px 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    transition: border-color 0.3s;
+    position: relative;
+    overflow: hidden;
   }
-  .label { color: #5a5c6a; }
-  .value { font-weight: bold; }
-  .green { color: #00e676; }
-  .red   { color: #ff4444; }
-  .yellow{ color: #ffc107; }
-  .divider { border-top: 1px solid #16181e; margin: 10px 0; }
+
+  .row::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 2px;
+    background: linear-gradient(180deg, var(--accent2), var(--accent3));
+    opacity: 0.4;
+    border-radius: 8px 0 0 8px;
+  }
+
+  .row:hover {
+    border-color: rgba(124,255,178,0.18);
+  }
+
+  .label {
+    color: var(--muted);
+    font-size: 9.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .value {
+    font-weight: 500;
+    font-size: 10.5px;
+    color: var(--fg);
+  }
+
+  /* status colors */
+  .green { color: var(--green); text-shadow: 0 0 8px rgba(124,255,178,0.5); }
+  .red   { color: var(--red);   text-shadow: 0 0 8px rgba(255,92,122,0.4); }
+  .yellow{ color: var(--yellow);}
+
+  /* ── Divider ── */
+  .divider {
+    border: none;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--border) 30%, var(--border) 70%, transparent);
+    margin: 10px 0 8px;
+  }
+
+  /* ── Tip ── */
   .tip {
     font-size: 9px;
-    color: #5a5c6a;
-    line-height: 1.6;
-    margin-top: 8px;
+    color: var(--muted);
+    line-height: 1.7;
+    padding: 7px 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    position: relative;
   }
+
+  .tip::before {
+    content: '◈';
+    position: absolute;
+    top: 7px; left: 10px;
+    font-size: 8px;
+    color: var(--accent2);
+    opacity: 0.6;
+  }
+  .tip-text { padding-left: 14px; display: block; }
+
+  /* ── Footer sparkle ── */
+  .footer {
+    display: flex;
+    justify-content: center;
+    padding: 7px 14px 9px;
+    gap: 4px;
+  }
+
+  .dot {
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: var(--muted);
+    opacity: 0.4;
+    animation: breathe 2s ease-in-out infinite;
+  }
+  .dot:nth-child(2) { animation-delay: 0.4s; background: var(--accent2); }
+  .dot:nth-child(3) { animation-delay: 0.8s; background: var(--accent3); }
+
+  @keyframes breathe {
+    0%, 100% { opacity: 0.25; transform: scale(1); }
+    50%       { opacity: 0.8;  transform: scale(1.4); }
+  }
+
+  /* ── Slide-in on open ── */
+  .body, .header {
+    animation: fadeSlide 0.25s ease both;
+  }
+  .body { animation-delay: 0.04s; }
+
+  @keyframes fadeSlide {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
   #status-dot { font-size: 16px; }
 </style>
 </head>
 <body>
-<div class="header">⬡ WatchGuard AI Bridge</div>
+
+<div class="header">
+  <div class="header-glow"></div>
+  <div class="header-inner">
+    <div class="logo-hex">⬡</div>
+    <div class="header-text">
+      <div class="header-title">WatchGuard AI</div>
+      <div class="header-sub">Browser Bridge · v1.1</div>
+    </div>
+  </div>
+</div>
+
 <div class="body">
+
   <div class="row">
     <span class="label">Python App</span>
-    <span class="value" id="py-status">Checking...</span>
+    <span class="value" id="py-status">Checking…</span>
   </div>
+
   <div class="row">
     <span class="label">Video Detected</span>
     <span class="value" id="video-status">—</span>
   </div>
+
   <div class="row">
     <span class="label">Current Position</span>
     <span class="value" id="position">—</span>
   </div>
+
   <div class="row">
     <span class="label">Page</span>
-    <span class="value" id="page-title" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">—</span>
+    <span class="value" id="page-title"
+      style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">—</span>
   </div>
+
   <div class="divider"></div>
+
   <div class="tip">
-    Make sure WatchGuard AI is running on your PC.<br>
-    The extension auto-connects to ws://localhost:8765.
+    <span class="tip-text">
+      Make sure WatchGuard AI is running on your PC.<br>
+      Auto-connects to ws://localhost:8765
+    </span>
   </div>
+
 </div>
+
+<div class="footer">
+  <div class="dot"></div>
+  <div class="dot"></div>
+  <div class="dot"></div>
+</div>
+
 <script src="popup.js"></script>
 </body>
 </html>

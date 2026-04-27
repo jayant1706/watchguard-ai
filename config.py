@@ -6,14 +6,16 @@ import json
 from pathlib import Path
 
 # ── Colours ──────────────────────────────────────────────────────────
-BG_DARK  = "#0d0d0d"
-BG_MID   = "#1a1a1a"
-FG       = "#e8e8e8"
-ACCENT   = "#6366f1"   # indigo
-MUTED    = "#555555"
-GREEN    = "#22c55e"
-RED      = "#ef4444"
-YELLOW   = "#eab308"
+BG_DARK  = "#080b12"      # deep navy-black (main window bg)
+BG_MID   = "#0e1220"      # slightly lighter panels / sidebar
+FG       = "#dde4f5"      # soft blue-white text
+ACCENT   = "#7cffb2"      # mint-green primary accent
+MUTED    = "#3a4260"      # blue-grey muted text / labels
+GREEN    = "#7cffb2"      # positive / watching
+RED      = "#ff5c7a"      # away / error
+YELLOW   = "#ffd97a"      # resume / warning
+CYAN     = "#4fd9ff"      # secondary accent (bridge, info)
+PURPLE   = "#b57bff"      # tertiary accent (decorative)
 
 # ── Detection defaults ────────────────────────────────────────────────
 DEFAULT_CHECK_INTERVAL  = 500   # ms between detection ticks
