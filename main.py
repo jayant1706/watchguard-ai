@@ -32,6 +32,41 @@ def fmt_time(s):
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 
+# ── Font helpers ──────────────────────────────────────────────────────
+FONT_MONO   = ("Courier New", 9)
+FONT_MONO_B = ("Courier New", 9, "bold")
+FONT_TITLE  = ("Courier New", 16, "bold")
+FONT_STAT   = ("Courier New", 17, "bold")
+FONT_SMALL  = ("Courier New", 8)
+FONT_SMALL_B= ("Courier New", 8, "bold")
+FONT_MED    = ("Courier New", 10)
+FONT_MED_B  = ("Courier New", 10, "bold")
+FONT_BIG_B  = ("Courier New", 11, "bold")
+
+# ── Accent line gradient simulation (thin canvas stripe) ─────────────
+def _accent_bar(parent, height=2):
+    """Draw a mint→cyan gradient bar using a canvas."""
+    c = tk.Canvas(parent, height=height, bg=config.BG_DARK,
+                  highlightthickness=0, bd=0)
+    c.pack(fill="x")
+    def _draw(event=None):
+        c.delete("all")
+        w = c.winfo_width() or 800
+        steps = 60
+        for i in range(steps):
+            t = i / steps
+            # mint (#7cffb2) → cyan (#4fd9ff)
+            r = int(0x7c + (0x4f - 0x7c) * t)
+            g = int(0xff + (0xd9 - 0xff) * t)
+            b = int(0xb2 + (0xff - 0xb2) * t)
+            x0 = int(w * i / steps)
+            x1 = int(w * (i + 1) / steps) + 1
+            c.create_rectangle(x0, 0, x1, height, fill=f"#{r:02x}{g:02x}{b:02x}", outline="")
+    c.bind("<Configure>", lambda e: _draw())
+    c.after(50, _draw)
+    return c
+
+
 class WatchGuardApp:
     def __init__(self):
         self.root = tk.Tk()
@@ -64,7 +99,6 @@ class WatchGuardApp:
         self.media_ctrl = MediaController(bridge=self.bridge)
         self.logger     = SessionLogger()
         self.grok       = GrokChat(api_key=config.load_api_key("groq"), backend="groq")
-        # Pre-load saved keys so switching backends restores them
         self._groq_key_cache   = config.load_api_key("groq")
         self._grok_key_cache   = config.load_api_key("grok")
         self._claude_key_cache = config.load_api_key("claude")
@@ -89,14 +123,34 @@ class WatchGuardApp:
 
     def build_ui(self):
         # ── Header ───────────────────────────────────────────────────
-        hdr = tk.Frame(self.root, bg=config.ACCENT, height=56)
+        hdr = tk.Frame(self.root, bg=config.BG_MID, height=56)
         hdr.pack(fill="x"); hdr.pack_propagate(False)
-        tk.Label(hdr, text="⬡  WatchGuard AI", font=("Courier New", 16, "bold"),
-                 bg=config.ACCENT, fg=config.BG_DARK).pack(side="left", padx=18, pady=10)
-        self.status_badge = tk.Label(hdr, text="● IDLE",
-                                      font=("Courier New", 10, "bold"),
-                                      bg=config.ACCENT, fg=config.BG_DARK)
-        self.status_badge.pack(side="right", padx=18)
+
+        # left: logo + title
+        logo_frame = tk.Frame(hdr, bg=config.BG_MID)
+        logo_frame.pack(side="left", padx=18, pady=0, fill="y")
+        tk.Label(logo_frame, text="⬡", font=("Courier New", 20, "bold"),
+                 bg=config.BG_MID, fg=config.ACCENT).pack(side="left", pady=10)
+        title_stack = tk.Frame(logo_frame, bg=config.BG_MID)
+        title_stack.pack(side="left", padx=(6, 0), pady=10)
+        tk.Label(title_stack, text="WatchGuard AI",
+                 font=("Courier New", 13, "bold"),
+                 bg=config.BG_MID, fg=config.FG).pack(anchor="w")
+        tk.Label(title_stack, text="attention guard · v3",
+                 font=FONT_SMALL,
+                 bg=config.BG_MID, fg=config.MUTED).pack(anchor="w")
+
+        self.status_badge = tk.Label(
+            hdr, text="● IDLE",
+            font=FONT_MONO_B,
+            bg=config.BG_DARK,
+            fg=config.MUTED,
+            padx=10, pady=4,
+            relief="flat")
+        self.status_badge.pack(side="right", padx=18, pady=12)
+
+        # thin rainbow accent bar under header
+        _accent_bar(self.root, height=2)
 
         body = tk.Frame(self.root, bg=config.BG_DARK)
         body.pack(fill="both", expand=True)
@@ -106,6 +160,9 @@ class WatchGuardApp:
         left.pack(side="left", fill="y"); left.pack_propagate(False)
         self._left(left)
 
+        # thin vertical separator
+        tk.Frame(body, bg=config.BG_DARK, width=1).pack(side="left", fill="y")
+
         # ── Right content: notebook-style tabs ───────────────────────
         right = tk.Frame(body, bg=config.BG_DARK)
         right.pack(side="left", fill="both", expand=True)
@@ -114,97 +171,111 @@ class WatchGuardApp:
     # ── Left sidebar ─────────────────────────────────────────────────
 
     def _left(self, p):
-        # Camera
-        cf = tk.Frame(p, bg=config.BG_DARK, height=220)
-        cf.pack(padx=12, pady=12, fill="x")
+        # Camera section header
+        _section_label(p, "CAMERA FEED")
+
+        cf = tk.Frame(p, bg="#000000", height=200)
+        cf.pack(padx=12, pady=(0, 8), fill="x")
         cf.pack_propagate(False)
+        self.cam_label = tk.Label(cf, bg="#000000")
+        self.cam_label.pack(fill="both", expand=True)
 
-        tk.Label(cf, text="CAMERA FEED", font=("Courier New", 8, "bold"),
-                 bg=config.BG_DARK, fg=config.MUTED).pack(anchor="w", padx=6, pady=(6,2))
-        self.cam_label = tk.Label(cf, bg="#000")
-        self.cam_label.pack(fill="both", expand=True, padx=6, pady=(0,4))
-        self.face_lbl = tk.Label(cf, text="○  No face",
-                                  font=("Courier New", 9),
-                                  bg=config.BG_DARK, fg=config.MUTED)
-        self.face_lbl.pack(pady=(0,4))
+        self.face_lbl = tk.Label(p, text="○  No face detected",
+                                  font=FONT_SMALL,
+                                  bg=config.BG_MID, fg=config.MUTED)
+        self.face_lbl.pack(pady=(0, 6))
 
-        # Browser bridge
+        _sep(p)
+
+        # Browser bridge section
+        _section_label(p, "BROWSER BRIDGE")
+
         bf = tk.Frame(p, bg=config.BG_MID)
-        bf.pack(padx=12, pady=6, fill="x")
-        tk.Label(bf, text="BROWSER BRIDGE", font=("Courier New", 8, "bold"),
-                 bg=config.BG_MID, fg=config.MUTED).pack(anchor="w", pady=(0,4))
+        bf.pack(padx=12, pady=(0, 4), fill="x")
+
         self.bridge_dot = tk.Label(bf, text="○  Waiting for extension...",
-                                    font=("Courier New", 9),
+                                    font=FONT_SMALL,
                                     bg=config.BG_MID, fg=config.MUTED)
         self.bridge_dot.pack(anchor="w")
+
         self.video_pos_lbl = tk.Label(bf, text="Video: --:--  /  --:--",
-                                       font=("Courier New", 10, "bold"),
+                                       font=FONT_MED_B,
                                        bg=config.BG_MID, fg=config.ACCENT)
-        self.video_pos_lbl.pack(anchor="w", pady=(4,2))
-        self.page_lbl = tk.Label(bf, text="", font=("Courier New", 8),
+        self.video_pos_lbl.pack(anchor="w", pady=(4, 2))
+
+        self.page_lbl = tk.Label(bf, text="",
+                                  font=FONT_SMALL,
                                   bg=config.BG_MID, fg=config.MUTED,
                                   wraplength=290, justify="left")
-        self.page_lbl.pack(anchor="w", pady=(0,4))
+        self.page_lbl.pack(anchor="w", pady=(0, 4))
+
         install_f = tk.Frame(bf, bg=config.BG_MID)
-        install_f.pack(fill="x", pady=(4,0))
+        install_f.pack(fill="x", pady=(4, 0))
         tk.Label(install_f,
                  text="Install the browser extension\nthen load YouTube/Netflix — bridge auto-connects.",
-                 font=("Courier New", 8), bg=config.BG_MID, fg=config.MUTED,
+                 font=FONT_SMALL, bg=config.BG_MID, fg=config.MUTED,
                  justify="left").pack(anchor="w")
 
         _sep(p)
 
-        # Mode
+        # Mode section
+        _section_label(p, "MODE")
+
         mf = tk.Frame(p, bg=config.BG_MID)
-        mf.pack(padx=12, pady=4, fill="x")
-        tk.Label(mf, text="MODE", font=("Courier New", 8, "bold"),
-                 bg=config.BG_MID, fg=config.MUTED).pack(anchor="w", pady=(0,6))
+        mf.pack(padx=12, pady=(0, 4), fill="x")
+
         for val, lbl, desc in [
             ("pause", "⏸  Auto-Pause",    "Pauses & resumes automatically"),
             ("log",   "📋  Timestamp Log", "Records missed moments for replay"),
         ]:
             f = tk.Frame(mf, bg=config.BG_MID); f.pack(fill="x", pady=2)
             tk.Radiobutton(f, text=lbl, variable=self.mode, value=val,
-                           font=("Courier New", 10, "bold"),
+                           font=FONT_MED_B,
                            bg=config.BG_MID, fg=config.FG,
                            selectcolor=config.BG_DARK,
                            activebackground=config.BG_MID,
                            command=self._mode_changed).pack(anchor="w")
-            tk.Label(f, text=f"    {desc}", font=("Courier New", 8),
+            tk.Label(f, text=f"    {desc}", font=FONT_SMALL,
                      bg=config.BG_MID, fg=config.MUTED).pack(anchor="w")
 
         _sep(p)
 
-        # Settings
+        # Settings sliders
+        _section_label(p, "SETTINGS")
+
         sf = tk.Frame(p, bg=config.BG_MID)
-        sf.pack(padx=12, pady=4, fill="x")
-        tk.Label(sf, text="SETTINGS", font=("Courier New", 8, "bold"),
-                 bg=config.BG_MID, fg=config.MUTED).pack(anchor="w", pady=(0,6))
+        sf.pack(padx=12, pady=(0, 4), fill="x")
         self._slider(sf, "Away threshold (s)", self.away_threshold, 2, 30)
         self._slider(sf, "Check interval (ms)", self.check_interval, 200, 2000)
         self._slider(sf, "Sensitivity", self.sensitivity, 0.1, 1.0, True)
 
         _sep(p)
 
+        # Buttons
         bf2 = tk.Frame(p, bg=config.BG_MID)
         bf2.pack(padx=12, pady=8, fill="x")
+
         self.start_btn = tk.Button(
             bf2, text="▶  START GUARD",
-            font=("Courier New", 11, "bold"),
+            font=FONT_BIG_B,
             bg=config.ACCENT, fg=config.BG_DARK,
             relief="flat", cursor="hand2",
+            activebackground="#5de89e",
+            activeforeground=config.BG_DARK,
             command=self.toggle_guard, height=2)
-        self.start_btn.pack(fill="x", pady=(0,6))
+        self.start_btn.pack(fill="x", pady=(0, 6))
+
         tk.Button(bf2, text="💾  Export CSV",
-                  font=("Courier New", 9), bg=config.BG_DARK, fg=config.FG,
+                  font=FONT_SMALL, bg=config.BG_DARK, fg=config.MUTED,
                   relief="flat", cursor="hand2",
+                  activebackground=config.BG_MID,
                   command=self.export_log).pack(fill="x")
 
     # ── Right panel with manual tabs ─────────────────────────────────
 
     def _right_with_tabs(self, p):
         # Tab bar
-        tab_bar = tk.Frame(p, bg=config.BG_MID, height=38)
+        tab_bar = tk.Frame(p, bg=config.BG_MID, height=40)
         tab_bar.pack(fill="x"); tab_bar.pack_propagate(False)
 
         self._tab_frames  = {}
@@ -220,11 +291,14 @@ class WatchGuardApp:
         for key, label in tab_defs:
             btn = tk.Button(
                 tab_bar, text=label,
-                font=("Courier New", 9, "bold"),
-                relief="flat", cursor="hand2", padx=14,
+                font=FONT_SMALL_B,
+                relief="flat", cursor="hand2", padx=16,
                 command=lambda k=key: self._show_tab(k))
             btn.pack(side="left", fill="y")
             self._tab_buttons[key] = btn
+
+        # thin accent line under tab bar
+        _accent_bar(p, height=1)
 
         # Content area
         content = tk.Frame(p, bg=config.BG_DARK)
@@ -251,27 +325,30 @@ class WatchGuardApp:
         self._tab_frames[key].pack(fill="both", expand=True)
         self._active_tab.set(key)
         for k, btn in self._tab_buttons.items():
+            active = (k == key)
             btn.config(
-                bg=config.ACCENT if k == key else config.BG_MID,
-                fg=config.BG_DARK if k == key else config.MUTED)
+                bg=config.BG_DARK if active else config.BG_MID,
+                fg=config.ACCENT  if active else config.MUTED,
+                relief="flat")
 
-    # ── Dashboard tab (original right panel) ─────────────────────────
+    # ── Dashboard tab ─────────────────────────────────────────────────
 
     def _build_dashboard(self, p):
+        # Stat cards row
         sr = tk.Frame(p, bg=config.BG_DARK)
-        sr.pack(fill="x", padx=16, pady=12)
+        sr.pack(fill="x", padx=16, pady=14)
         self.stat_session = self._stat(sr, "SESSION", "00:00:00")
         self.stat_away    = self._stat(sr, "AWAY",    "00:00:00")
         self.stat_pauses  = self._stat(sr, "BREAKS",  "0")
         self.stat_score   = self._stat(sr, "FOCUS",   "100%")
 
-        tf = tk.Frame(p, bg=config.BG_MID)
-        tf.pack(fill="x", padx=16, pady=(0,8))
-        tk.Label(tf, text="ATTENTION TIMELINE",
-                 font=("Courier New", 8, "bold"),
-                 bg=config.BG_MID, fg=config.MUTED).pack(anchor="w", padx=10, pady=(8,3))
-        self.tl_canvas = tk.Canvas(tf, bg=config.BG_DARK, height=26, highlightthickness=0)
-        self.tl_canvas.pack(fill="x", padx=10, pady=(0,8))
+        # Timeline
+        tf = tk.Frame(p, bg=config.BG_MID, bd=0)
+        tf.pack(fill="x", padx=16, pady=(0, 10))
+        _section_label_inline(tf, "ATTENTION TIMELINE")
+        self.tl_canvas = tk.Canvas(tf, bg=config.BG_DARK, height=22,
+                                    highlightthickness=0)
+        self.tl_canvas.pack(fill="x", padx=10, pady=(0, 8))
 
         # Resume panel (log mode only)
         self.resume_outer = tk.Frame(p, bg=config.BG_MID)
@@ -279,10 +356,10 @@ class WatchGuardApp:
         rh = tk.Frame(self.resume_outer, bg=config.BG_MID)
         rh.pack(fill="x")
         tk.Label(rh, text="📋  MISSED MOMENTS",
-                 font=("Courier New", 8, "bold"),
+                 font=FONT_SMALL_B,
                  bg=config.BG_MID, fg=config.MUTED).pack(side="left", padx=10, pady=8)
-        tk.Label(rh, text="click ▶ to jump back",
-                 font=("Courier New", 8),
+        tk.Label(rh, text="auto-seeks on return  ·  ▶ to replay",
+                 font=FONT_SMALL,
                  bg=config.BG_MID, fg=config.MUTED).pack(side="right", padx=10)
 
         self.resume_canvas = tk.Canvas(self.resume_outer, bg=config.BG_MID,
@@ -291,36 +368,44 @@ class WatchGuardApp:
                            command=self.resume_canvas.yview)
         self.resume_canvas.configure(yscrollcommand=rsb.set)
         rsb.pack(side="right", fill="y")
-        self.resume_canvas.pack(fill="both", expand=True, padx=8, pady=(0,8))
+        self.resume_canvas.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         self.resume_list = tk.Frame(self.resume_canvas, bg=config.BG_MID)
-        self.resume_canvas.create_window((0,0), window=self.resume_list, anchor="nw")
+        self.resume_canvas.create_window((0, 0), window=self.resume_list, anchor="nw")
         self.resume_list.bind("<Configure>",
             lambda e: self.resume_canvas.configure(
                 scrollregion=self.resume_canvas.bbox("all")))
         self._no_events_lbl = tk.Label(self.resume_list,
                                         text="No away events yet.",
-                                        font=("Courier New", 9),
+                                        font=FONT_MONO,
                                         bg=config.BG_MID, fg=config.MUTED)
         self._no_events_lbl.pack(anchor="w", padx=8, pady=6)
 
         # Event log
         lf = tk.Frame(p, bg=config.BG_MID)
-        lf.pack(fill="both", expand=True, padx=16, pady=(0,12))
+        lf.pack(fill="both", expand=True, padx=16, pady=(0, 12))
+
         lh = tk.Frame(lf, bg=config.BG_MID)
         lh.pack(fill="x")
-        tk.Label(lh, text="EVENT LOG", font=("Courier New", 8, "bold"),
+        tk.Label(lh, text="EVENT LOG", font=FONT_SMALL_B,
                  bg=config.BG_MID, fg=config.MUTED).pack(side="left", padx=10, pady=8)
-        tk.Button(lh, text="✕ Clear", font=("Courier New", 8),
+        tk.Button(lh, text="✕ Clear", font=FONT_SMALL,
                   bg=config.BG_MID, fg=config.MUTED,
                   relief="flat", cursor="hand2",
+                  activebackground=config.BG_DARK,
                   command=self._clear_log).pack(side="right", padx=10)
+
         self.log_text = tk.Text(lf, bg=config.BG_DARK, fg=config.FG,
-                                 font=("Courier New", 9), relief="flat",
-                                 state="disabled", wrap="word", padx=10, pady=8)
-        sb = tk.Scrollbar(lf, command=self.log_text.yview)
+                                 font=FONT_MONO, relief="flat",
+                                 state="disabled", wrap="word",
+                                 padx=10, pady=8,
+                                 selectbackground=config.BG_MID,
+                                 insertbackground=config.ACCENT)
+        sb = tk.Scrollbar(lf, command=self.log_text.yview,
+                          bg=config.BG_MID, troughcolor=config.BG_DARK)
         self.log_text.config(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
-        self.log_text.pack(fill="both", expand=True, padx=(10,0), pady=(0,10))
+        self.log_text.pack(fill="both", expand=True, padx=(10, 0), pady=(0, 10))
+
         for tag, col in [("watching", config.GREEN), ("away", config.RED),
                           ("resume", config.YELLOW), ("info", config.MUTED),
                           ("system", config.ACCENT)]:
@@ -337,23 +422,24 @@ class WatchGuardApp:
         hdr.pack(fill="x", padx=16, pady=(12, 0))
 
         backend_name = "Grok (xAI)" if self.grok.is_grok() else "Claude (Anthropic)"
-        self.chat_header_lbl = tk.Label(hdr, text=f"🤖  {backend_name.upper()} ASSISTANT",
-                 font=("Courier New", 10, "bold"),
-                 bg=config.BG_MID, fg=config.ACCENT)
+        self.chat_header_lbl = tk.Label(
+            hdr, text=f"🤖  {backend_name.upper()} ASSISTANT",
+            font=FONT_MED_B,
+            bg=config.BG_MID, fg=config.ACCENT)
         self.chat_header_lbl.pack(side="left", padx=10, pady=8)
 
-        # API key indicator in header
         self.chat_key_indicator = tk.Label(
             hdr,
             text="● Key set" if self.grok.api_key else "○ No key — go to Settings",
-            font=("Courier New", 8),
+            font=FONT_SMALL,
             bg=config.BG_MID,
             fg=config.GREEN if self.grok.api_key else config.MUTED)
         self.chat_key_indicator.pack(side="right", padx=10)
 
         tk.Button(hdr, text="✕ Clear chat",
-                  font=("Courier New", 8), bg=config.BG_MID, fg=config.MUTED,
+                  font=FONT_SMALL, bg=config.BG_MID, fg=config.MUTED,
                   relief="flat", cursor="hand2",
+                  activebackground=config.BG_DARK,
                   command=self._clear_chat).pack(side="right")
 
         # Chat display
@@ -362,16 +448,18 @@ class WatchGuardApp:
 
         self.chat_text = tk.Text(
             chat_outer, bg=config.BG_DARK, fg=config.FG,
-            font=("Courier New", 9), relief="flat",
+            font=FONT_MONO, relief="flat",
             state="disabled", wrap="word", padx=12, pady=10,
-            cursor="arrow")
-        csb = tk.Scrollbar(chat_outer, command=self.chat_text.yview)
+            cursor="arrow",
+            selectbackground=config.BG_MID,
+            insertbackground=config.ACCENT)
+        csb = tk.Scrollbar(chat_outer, command=self.chat_text.yview,
+                           bg=config.BG_MID, troughcolor=config.BG_DARK)
         self.chat_text.config(yscrollcommand=csb.set)
         csb.pack(side="right", fill="y")
         self.chat_text.pack(fill="both", expand=True)
 
-        # Tag colours
-        self.chat_text.tag_config("you",    foreground=config.ACCENT,  font=("Courier New", 9, "bold"))
+        self.chat_text.tag_config("you",    foreground=config.ACCENT,  font=FONT_MONO_B)
         self.chat_text.tag_config("bot",    foreground=config.FG)
         self.chat_text.tag_config("sys",    foreground=config.MUTED,   font=("Courier New", 8, "italic"))
         self.chat_text.tag_config("err",    foreground=config.RED)
@@ -383,24 +471,27 @@ class WatchGuardApp:
 
         self.chat_input = tk.Text(
             inp_frame, bg=config.BG_MID, fg=config.FG,
-            font=("Courier New", 10), relief="flat",
+            font=FONT_MED, relief="flat",
             height=3, padx=10, pady=8, wrap="word",
-            insertbackground=config.ACCENT)
-        self.chat_input.pack(side="left", fill="x", expand=True, padx=(0,8))
+            insertbackground=config.ACCENT,
+            selectbackground=config.BG_DARK)
+        self.chat_input.pack(side="left", fill="x", expand=True, padx=(0, 8))
         self.chat_input.bind("<Return>",       self._on_chat_enter)
-        self.chat_input.bind("<Shift-Return>", lambda e: None)  # allow newline
+        self.chat_input.bind("<Shift-Return>", lambda e: None)
 
         send_btn = tk.Button(
             inp_frame, text="Send\n▶",
-            font=("Courier New", 9, "bold"),
+            font=FONT_MONO_B,
             bg=config.ACCENT, fg=config.BG_DARK,
             relief="flat", cursor="hand2", width=6,
+            activebackground="#5de89e",
+            activeforeground=config.BG_DARK,
             command=self._send_chat)
         send_btn.pack(side="left", fill="y")
 
         # Quick-prompt buttons
         qp_frame = tk.Frame(p, bg=config.BG_DARK)
-        qp_frame.pack(fill="x", padx=16, pady=(0,8))
+        qp_frame.pack(fill="x", padx=16, pady=(0, 8))
         quick_prompts = [
             ("📊 My stats",    "Give me a summary of my watch session stats."),
             ("💡 Tips",        "Give me tips to stay more focused while watching."),
@@ -409,10 +500,11 @@ class WatchGuardApp:
         for label, prompt in quick_prompts:
             tk.Button(
                 qp_frame, text=label,
-                font=("Courier New", 8), bg=config.BG_MID, fg=config.FG,
+                font=FONT_SMALL, bg=config.BG_MID, fg=config.FG,
                 relief="flat", cursor="hand2", padx=8,
+                activebackground=config.BG_DARK,
                 command=lambda pr=prompt: self._send_quick(pr)
-            ).pack(side="left", padx=(0,6), pady=2)
+            ).pack(side="left", padx=(0, 6), pady=2)
 
         self._chat_append("sys", "WatchGuard Assistant powered by Grok. Ask me anything!\n"
                                   "Set your xAI API key in the ⚙ Settings tab to get started.\n")
@@ -421,19 +513,17 @@ class WatchGuardApp:
 
     def _build_settings_tab(self, p):
         tk.Label(p, text="⚙  SETTINGS",
-                 font=("Courier New", 10, "bold"),
-                 bg=config.BG_DARK, fg=config.ACCENT).pack(anchor="w", padx=20, pady=(16,8))
+                 font=FONT_MED_B,
+                 bg=config.BG_DARK, fg=config.ACCENT).pack(anchor="w", padx=20, pady=(16, 8))
 
-        # ── Backend selector ──────────────────────────────────────────
+        # Backend selector
         be_frame = tk.Frame(p, bg=config.BG_MID)
-        be_frame.pack(fill="x", padx=16, pady=(0,8))
-        tk.Label(be_frame, text="AI BACKEND",
-                 font=("Courier New", 8, "bold"),
-                 bg=config.BG_MID, fg=config.MUTED).pack(anchor="w", padx=12, pady=(12,4))
+        be_frame.pack(fill="x", padx=16, pady=(0, 8))
+        _section_label_inline(be_frame, "AI BACKEND")
 
         self.backend_var = tk.StringVar(value=self.grok.backend)
         be_row = tk.Frame(be_frame, bg=config.BG_MID)
-        be_row.pack(fill="x", padx=12, pady=(0,10))
+        be_row.pack(fill="x", padx=12, pady=(0, 10))
         for val, lbl, hint in [
             ("groq",   "⚡ Groq Cloud (Llama 3.3)", "console.groq.com — free tier available"),
             ("grok",   "🤖 Grok  (xAI)",             "console.x.ai"),
@@ -441,73 +531,75 @@ class WatchGuardApp:
         ]:
             rb = tk.Radiobutton(be_row, text=f"{lbl}   key from {hint}",
                                 variable=self.backend_var, value=val,
-                                font=("Courier New", 9),
+                                font=FONT_MONO,
                                 bg=config.BG_MID, fg=config.FG,
                                 selectcolor=config.BG_DARK,
                                 activebackground=config.BG_MID,
                                 command=self._on_backend_change)
             rb.pack(anchor="w", pady=2)
 
-        # ── API Key section ───────────────────────────────────────────
+        # API Key section
         api_frame = tk.Frame(p, bg=config.BG_MID)
-        api_frame.pack(fill="x", padx=16, pady=(0,12))
+        api_frame.pack(fill="x", padx=16, pady=(0, 12))
 
         self.key_label = tk.Label(api_frame, text="API KEY",
-                 font=("Courier New", 8, "bold"),
+                 font=FONT_SMALL_B,
                  bg=config.BG_MID, fg=config.MUTED)
-        self.key_label.pack(anchor="w", padx=12, pady=(12,4))
+        self.key_label.pack(anchor="w", padx=12, pady=(12, 4))
 
         key_row = tk.Frame(api_frame, bg=config.BG_MID)
-        key_row.pack(fill="x", padx=12, pady=(0,6))
+        key_row.pack(fill="x", padx=12, pady=(0, 6))
 
         self.api_key_var = tk.StringVar(value=self.grok.api_key)
         self.key_entry = tk.Entry(
             key_row, textvariable=self.api_key_var,
-            font=("Courier New", 10), bg=config.BG_DARK, fg=config.FG,
-            relief="flat", show="•", insertbackground=config.ACCENT)
-        self.key_entry.pack(side="left", fill="x", expand=True, ipady=6, padx=(0,8))
+            font=FONT_MED, bg=config.BG_DARK, fg=config.FG,
+            relief="flat", show="•",
+            insertbackground=config.ACCENT,
+            selectbackground=config.BG_MID)
+        self.key_entry.pack(side="left", fill="x", expand=True, ipady=6, padx=(0, 8))
 
         self.show_key_var = tk.BooleanVar(value=False)
         tk.Checkbutton(
             key_row, text="Show",
             variable=self.show_key_var,
-            font=("Courier New", 8), bg=config.BG_MID, fg=config.MUTED,
+            font=FONT_SMALL, bg=config.BG_MID, fg=config.MUTED,
             selectcolor=config.BG_DARK, activebackground=config.BG_MID,
             command=self._toggle_key_visibility).pack(side="left")
 
         btn_row = tk.Frame(api_frame, bg=config.BG_MID)
-        btn_row.pack(fill="x", padx=12, pady=(0,12))
+        btn_row.pack(fill="x", padx=12, pady=(0, 12))
 
         tk.Button(
             btn_row, text="💾  Save Key",
-            font=("Courier New", 9, "bold"),
+            font=FONT_MONO_B,
             bg=config.ACCENT, fg=config.BG_DARK,
             relief="flat", cursor="hand2",
-            command=self._save_api_key).pack(side="left", padx=(0,8), ipady=4)
+            activebackground="#5de89e",
+            command=self._save_api_key).pack(side="left", padx=(0, 8), ipady=4)
 
         tk.Button(
             btn_row, text="🗑  Clear Key",
-            font=("Courier New", 9),
+            font=FONT_MONO,
             bg=config.BG_DARK, fg=config.MUTED,
             relief="flat", cursor="hand2",
+            activebackground=config.BG_MID,
             command=self._clear_api_key).pack(side="left", ipady=4)
 
         self.key_status_lbl = tk.Label(
             api_frame,
             text=self._key_status_text(),
-            font=("Courier New", 9),
+            font=FONT_MONO,
             bg=config.BG_MID,
             fg=config.GREEN if self.grok.api_key else config.MUTED)
-        self.key_status_lbl.pack(anchor="w", padx=12, pady=(0,12))
+        self.key_status_lbl.pack(anchor="w", padx=12, pady=(0, 12))
 
         _sep(p)
 
-        # ── Info ──────────────────────────────────────────────────────
+        # Info block
         info_frame = tk.Frame(p, bg=config.BG_MID)
-        info_frame.pack(fill="x", padx=16, pady=(0,12))
-        tk.Label(info_frame, text="ABOUT AI CHAT",
-                 font=("Courier New", 8, "bold"),
-                 bg=config.BG_MID, fg=config.MUTED).pack(anchor="w", padx=12, pady=(12,4))
+        info_frame.pack(fill="x", padx=16, pady=(0, 12))
+        _section_label_inline(info_frame, "ABOUT AI CHAT")
         info_text = (
             "The AI chat knows your current session stats — focus score,\n"
             "away time, breaks, and what you're watching.\n\n"
@@ -518,9 +610,9 @@ class WatchGuardApp:
             "and are only sent to the selected AI provider."
         )
         tk.Label(info_frame, text=info_text,
-                 font=("Courier New", 8),
+                 font=FONT_SMALL,
                  bg=config.BG_MID, fg=config.MUTED,
-                 justify="left").pack(anchor="w", padx=12, pady=(0,12))
+                 justify="left").pack(anchor="w", padx=12, pady=(0, 12))
 
     # ── Chat helpers ──────────────────────────────────────────────────
 
@@ -538,8 +630,7 @@ class WatchGuardApp:
         self._chat_append("sys", "Chat cleared.\n")
 
     def _on_chat_enter(self, event):
-        # Enter sends; Shift+Enter is newline
-        if not event.state & 0x1:   # Shift not held
+        if not event.state & 0x1:
             self._send_chat()
             return "break"
 
@@ -553,34 +644,24 @@ class WatchGuardApp:
         if not msg:
             return
         self.chat_input.delete("1.0", "end")
-
         self._chat_append("you", f"\nYou: {msg}\n")
-
-        # Inject current session context
         ctx = self._build_session_context()
         self.grok.set_session_context(ctx)
-
-        # Mark position BEFORE inserting the typing indicator so we can
-        # delete it precisely later, regardless of unicode content
         self.chat_text.config(state="normal")
         self._thinking_mark = self.chat_text.index("end-1c")
         self.chat_text.config(state="disabled")
-
         thinking_label = "Grok is thinking…" if self.grok.is_grok() else "Claude is thinking…"
         self._chat_append("typing", f"{thinking_label}\n")
-
         threading.Thread(target=self._do_grok_call, args=(msg,), daemon=True).start()
 
     def _remove_thinking_line(self):
-        """Delete the 'Grok is thinking…' line using the saved mark."""
         try:
             self.chat_text.config(state="normal")
-            start = self._thinking_mark + "+1c"   # char after the mark
-            # find end of that line
+            start = self._thinking_mark + "+1c"
             end = self.chat_text.index(f"{start} lineend+1c")
             self.chat_text.delete(start, end)
         except Exception:
-            pass  # if something went wrong just leave it
+            pass
         finally:
             self.chat_text.config(state="disabled")
 
@@ -640,7 +721,6 @@ class WatchGuardApp:
         backend = self.backend_var.get()
         self.grok.set_backend(backend)
         name = self.grok.backend_display_name()
-        # Restore the saved key for the newly selected backend
         saved_key = {
             "groq":   self._groq_key_cache,
             "grok":   self._grok_key_cache,
@@ -648,22 +728,19 @@ class WatchGuardApp:
         }.get(backend, "")
         self.api_key_var.set(saved_key)
         self.grok.set_api_key(saved_key)
-        # Update key status label
         self.key_status_lbl.config(
             text=self._key_status_text(),
             fg=config.GREEN if saved_key else config.MUTED)
-        # Update chat header indicator
         self.chat_key_indicator.config(
             text=f"● {name} — key set" if saved_key else f"○ {name} — no key — go to Settings",
             fg=config.GREEN if saved_key else config.MUTED)
         self.chat_header_lbl.config(text=f"🤖  {name.upper()} ASSISTANT")
-        # Clear chat history since backend changed
         self.grok.clear_history()
         self._chat_append("sys", f"Switched to {name}. Chat history cleared.\n")
 
     def _key_status_text(self):
         if self.grok.api_key:
-            masked = self.grok.api_key[:6] + "•" * max(0, len(self.grok.api_key)-6)
+            masked = self.grok.api_key[:6] + "•" * max(0, len(self.grok.api_key) - 6)
             return f"✓ Key saved: {masked}"
         return "○ No API key set"
 
@@ -679,7 +756,6 @@ class WatchGuardApp:
             return
         self.grok.set_api_key(key)
         config.save_api_key(key, backend)
-        # Update local cache
         if backend == "groq":
             self._groq_key_cache = key
         elif backend == "grok":
@@ -711,25 +787,31 @@ class WatchGuardApp:
     def _slider(self, p, lbl, var, lo, hi, fl=False):
         f = tk.Frame(p, bg=p.cget("bg")); f.pack(fill="x", pady=3)
         row = tk.Frame(f, bg=p.cget("bg")); row.pack(fill="x")
-        tk.Label(row, text=lbl, font=("Courier New", 8),
+        tk.Label(row, text=lbl, font=FONT_SMALL,
                  bg=p.cget("bg"), fg=config.FG).pack(side="left")
-        vl = tk.Label(row, font=("Courier New", 8, "bold"),
-                       bg=p.cget("bg"), fg=config.ACCENT); vl.pack(side="right")
+        vl = tk.Label(row, font=FONT_SMALL_B,
+                       bg=p.cget("bg"), fg=config.ACCENT)
+        vl.pack(side="right")
         def upd(v): vl.config(text=f"{float(v):.1f}" if fl else str(int(float(v))))
         tk.Scale(f, variable=var, from_=lo, to=hi, orient="horizontal",
-                 bg=p.cget("bg"), fg=config.FG, troughcolor=config.BG_DARK,
-                 highlightthickness=0, showvalue=False, command=upd,
+                 bg=p.cget("bg"), fg=config.FG,
+                 troughcolor=config.BG_DARK,
+                 highlightthickness=0, showvalue=False,
+                 command=upd,
                  resolution=0.1 if fl else 1).pack(fill="x")
         upd(var.get())
 
     def _stat(self, p, title, init):
-        f = tk.Frame(p, bg=config.BG_MID, padx=10, pady=8)
-        f.pack(side="left", fill="both", expand=True, padx=(0,8))
+        f = tk.Frame(p, bg=config.BG_MID, padx=10, pady=10)
+        f.pack(side="left", fill="both", expand=True, padx=(0, 8))
+        # thin top accent line
+        tk.Frame(f, bg=config.ACCENT, height=2).pack(fill="x", pady=(0, 6))
         tk.Label(f, text=title, font=("Courier New", 7, "bold"),
                  bg=config.BG_MID, fg=config.MUTED).pack(anchor="w")
-        lbl = tk.Label(f, text=init, font=("Courier New", 16, "bold"),
+        lbl = tk.Label(f, text=init, font=FONT_STAT,
                        bg=config.BG_MID, fg=config.FG)
-        lbl.pack(anchor="w"); return lbl
+        lbl.pack(anchor="w")
+        return lbl
 
     # ══════════════════════════════════════════════════════════════════
     #  GUARD LOGIC
@@ -753,7 +835,8 @@ class WatchGuardApp:
         self.camera_running     = True
         self.logger             = SessionLogger()
         self.cam_label.config(height=300)
-        self.start_btn.config(text="⏹  STOP GUARD", bg=config.RED, fg="white")
+        self.start_btn.config(text="⏹  STOP GUARD", bg=config.RED, fg="white",
+                              activebackground="#cc4460")
         mode = "AUTO-PAUSE" if self.mode.get() == "pause" else "TIMESTAMP LOGGER"
         self._log("system", f"▶ Started — {mode}")
         threading.Thread(target=self._cam_loop,    daemon=True).start()
@@ -768,9 +851,10 @@ class WatchGuardApp:
         if self.current_status == "away" and self.mode.get() == "pause":
             self.media_ctrl.play()
         elapsed = time.time() - self.session_start if self.session_start else 0
-        focus   = max(0, 100 - int((self.total_away_secs / max(elapsed,1)) * 100))
+        focus   = max(0, 100 - int((self.total_away_secs / max(elapsed, 1)) * 100))
         self._update_status("idle")
-        self.start_btn.config(text="▶  START GUARD", bg=config.ACCENT, fg=config.BG_DARK)
+        self.start_btn.config(text="▶  START GUARD", bg=config.ACCENT,
+                              fg=config.BG_DARK, activebackground="#5de89e")
         self._log("system",
             f"⏹ Done — {fmt_time(elapsed)} | Focus {focus}% | {self.interruption_count} break(s)")
         if self.logger.away_events:
@@ -834,7 +918,7 @@ class WatchGuardApp:
                         was_away = True
                         self.away_start_time = time.time()
                         self.root.after(0, self._on_away)
-            time.sleep(max(0, ms/1000 - (time.time()-t0)))
+            time.sleep(max(0, ms / 1000 - (time.time() - t0)))
 
     # ── Away / Return ─────────────────────────────────────────────────
 
@@ -861,31 +945,33 @@ class WatchGuardApp:
         self._add_tl("away")
 
     def _on_returned(self, real_away_secs):
-        print("🔥 RETURN DETECTED")
         self._update_status("watching")
         ts  = datetime.now().strftime("%H:%M:%S")
         pos = self.media_ctrl.get_position()
         closed = self.logger.log_return(pos)
-        print("🔥 Entered LOG MODE block")
+
         if self.mode.get() == "pause":
+            # ── Auto-Pause mode: unchanged — just resume in place ────
             self.media_ctrl.play()
             self._log("resume",
                 f"[{ts}] ▶ Returned — resumed ({fmt_time(real_away_secs)} away)")
+
         else:
+            # ── Timestamp Logger mode: auto-seek to missed moment ────
             last_event = self.logger.get_last_event()
-            print("🔥 LAST EVENT:", last_event)
-            if last_event:
-                print("🔥 video_pos_away:", last_event.video_pos_away)
             if last_event and last_event.video_pos_away is not None:
                 jump_to = max(0, last_event.video_pos_away - 2)
-                self._log("info", f"DEBUG: Trying to resume at {jump_to}")
-                self._log("resume", f"[{ts}] ↩ Auto-resume → {fmt_video(jump_to)}")
+                self._log("resume",
+                    f"[{ts}] ↩ Face detected — auto-jumping to {fmt_video(jump_to)} "
+                    f"({fmt_time(real_away_secs)} away)")
                 if time.time() - self.last_resume_time > 2:
                     self.last_resume_time = time.time()
                     threading.Thread(
                         target=self._do_jump, args=(jump_to,), daemon=True).start()
             else:
-                self._log("resume", f"[{ts}] ↩ Back after {fmt_time(real_away_secs)}")
+                self._log("resume",
+                    f"[{ts}] ↩ Back after {fmt_time(real_away_secs)} — no position to seek")
+
         self._add_tl("watching")
         if closed and self.mode.get() == "log":
             self.root.after(0, self._refresh_resume)
@@ -898,7 +984,7 @@ class WatchGuardApp:
         events = self.logger.get_resume_events()
         if not events:
             tk.Label(self.resume_list, text="No away events yet.",
-                     font=("Courier New", 9),
+                     font=FONT_MONO,
                      bg=config.BG_MID, fg=config.MUTED).pack(anchor="w", padx=8, pady=6)
             return
         for ev in events:
@@ -907,20 +993,25 @@ class WatchGuardApp:
             info = tk.Frame(row, bg=config.BG_DARK)
             info.pack(side="left", fill="x", expand=True, padx=6, pady=4)
             tk.Label(info, text=f"#{ev.event_id}  Left at {fmt_video(ev.video_pos_away)}",
-                     font=("Courier New", 9, "bold"),
+                     font=FONT_MONO_B,
                      bg=config.BG_DARK, fg=config.FG).pack(anchor="w")
             away_s = fmt_time(ev.away_duration) if ev.away_duration else "?"
             tk.Label(info, text=f"   Gone {away_s}  →  return point {fmt_video(ev.video_pos_return)}",
-                     font=("Courier New", 8),
+                     font=FONT_SMALL,
                      bg=config.BG_DARK, fg=config.MUTED).pack(anchor="w")
+            # "auto-sought" badge — shows the seek already happened automatically
+            tk.Label(info, text="   ✓ auto-sought on return",
+                     font=FONT_SMALL,
+                     bg=config.BG_DARK, fg=config.ACCENT).pack(anchor="w")
             jp = ev.video_pos_away
             if jp is not None:
                 can_seek = self.bridge.is_connected()
                 tk.Button(
-                    row, text=f"▶ {fmt_video(jp)}",
-                    font=("Courier New", 9, "bold"),
+                    row, text=f"↩ {fmt_video(jp)}",
+                    font=FONT_MONO_B,
                     bg=config.ACCENT if can_seek else config.MUTED,
                     fg=config.BG_DARK, relief="flat", cursor="hand2",
+                    activebackground="#5de89e",
                     command=lambda p=jp: self._jump_to(p)
                 ).pack(side="right", padx=6, pady=4)
 
@@ -972,8 +1063,8 @@ class WatchGuardApp:
                 if self.current_status == "away" and self.away_start_time else 0)
             self.stat_away.config(text=fmt_time(away))
             self.stat_pauses.config(text=str(self.interruption_count))
-            focus = max(0, 100 - int((away / max(el,1)) * 100))
-            col = config.GREEN if focus>=70 else config.YELLOW if focus>=40 else config.RED
+            focus = max(0, 100 - int((away / max(el, 1)) * 100))
+            col = config.GREEN if focus >= 70 else config.YELLOW if focus >= 40 else config.RED
             self.stat_score.config(text=f"{focus}%", fg=col)
         self.root.after(1000, self._stats_loop)
 
@@ -989,12 +1080,12 @@ class WatchGuardApp:
     def _draw_tl(self):
         c = self.tl_canvas; c.delete("all")
         if not self.timeline_segments: return
-        total = sum(d for _,d in self.timeline_segments) or 1
+        total = sum(d for _, d in self.timeline_segments) or 1
         w = c.winfo_width() or 500; x = 0
         for status, dur in self.timeline_segments:
-            sw = max(2, (dur/total)*w)
-            c.create_rectangle(x, 3, x+sw-1, 23,
-                               fill=config.GREEN if status=="watching" else config.RED,
+            sw = max(2, (dur / total) * w)
+            c.create_rectangle(x, 2, x + sw - 1, 20,
+                               fill=config.GREEN if status == "watching" else config.RED,
                                outline="")
             x += sw
 
@@ -1002,30 +1093,33 @@ class WatchGuardApp:
 
     def _update_status(self, s):
         self.current_status = s
-        t = {"idle":("● IDLE",config.MUTED),"watching":("● WATCHING",config.GREEN),
-             "away":("● AWAY",config.RED)}.get(s,("● IDLE",config.MUTED))
+        t = {
+            "idle":     ("● IDLE",     config.MUTED),
+            "watching": ("● WATCHING", config.GREEN),
+            "away":     ("● AWAY",     config.RED),
+        }.get(s, ("● IDLE", config.MUTED))
         self.status_badge.config(text=t[0], fg=t[1])
 
     def _mode_changed(self):
         if self.mode.get() == "log":
-            self.resume_outer.pack(fill="x", padx=16, pady=(0,8))
+            self.resume_outer.pack(fill="x", padx=16, pady=(0, 8))
         else:
             self.resume_outer.pack_forget()
 
     def _log(self, tag, msg):
         self.log_text.config(state="normal")
-        self.log_text.insert("end", msg+"\n", tag)
+        self.log_text.insert("end", msg + "\n", tag)
         self.log_text.see("end")
         self.log_text.config(state="disabled")
 
     def _clear_log(self):
         self.log_text.config(state="normal")
-        self.log_text.delete("1.0","end")
+        self.log_text.delete("1.0", "end")
         self.log_text.config(state="disabled")
 
     def export_log(self):
         if not self.logger.away_events:
-            messagebox.showinfo("No Data","No events yet."); return
+            messagebox.showinfo("No Data", "No events yet."); return
         messagebox.showinfo("Exported", f"Saved to:\n{self.logger.export_csv()}")
 
     def on_close(self):
@@ -1037,8 +1131,27 @@ class WatchGuardApp:
         self.root.mainloop()
 
 
+# ── UI helper functions ───────────────────────────────────────────────
+
 def _sep(p):
+    """Horizontal separator line."""
     tk.Frame(p, bg=config.BG_DARK, height=1).pack(fill="x", padx=12, pady=4)
+
+
+def _section_label(p, text):
+    """Sidebar section header with left accent dot."""
+    f = tk.Frame(p, bg=config.BG_MID)
+    f.pack(fill="x", padx=12, pady=(8, 4))
+    tk.Label(f, text="◈", font=("Courier New", 8),
+             bg=config.BG_MID, fg=config.CYAN).pack(side="left")
+    tk.Label(f, text=f"  {text}", font=("Courier New", 7, "bold"),
+             bg=config.BG_MID, fg=config.MUTED).pack(side="left")
+
+
+def _section_label_inline(p, text):
+    """Inline section header for panels (used inside tab content frames)."""
+    tk.Label(p, text=text, font=("Courier New", 8, "bold"),
+             bg=config.BG_MID, fg=config.MUTED).pack(anchor="w", padx=10, pady=(8, 3))
 
 
 if __name__ == "__main__":
