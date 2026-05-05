@@ -11,11 +11,15 @@ New in v4:
 """
 
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 import threading
 import time
 import sys
 import os
+import math
+import platform
+import subprocess
+import tempfile
 from datetime import datetime
 
 try:
@@ -55,6 +59,65 @@ GRACE_HARD_SECS   = 3.0    # additional seconds before actual pause
 RESUME_COOLDOWN   = 8.0    # seconds after resume during which no re-pause occurs
 VOLUME_DUCK_STEPS = 10     # number of volume steps during fade-out
 VOLUME_DUCK_MS    = 200    # ms between each volume step
+
+
+# ── New feature tunables ─────────────────────────────────────────────
+DEFAULT_DAILY_GOAL_MINS = 60      # default watch-time goal in minutes
+BREAK_DURATION_SECS     = 300     # default DND break = 5 minutes
+STREAK_THRESHOLD_SECS   = 60     # min watching seconds to count toward streak
+
+_PLATFORM = platform.system()
+
+
+def _play_beep():
+    """Cross-platform soft beep (best-effort, never crashes the app)."""
+    try:
+        if _PLATFORM == "Windows":
+            import winsound
+            winsound.Beep(880, 120)
+        elif _PLATFORM == "Darwin":
+            subprocess.Popen(["afplay", "/System/Library/Sounds/Tink.aiff"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            # Linux: try paplay, then beep, then bell
+            for cmd in [["paplay", "/usr/share/sounds/freedesktop/stereo/bell.oga"],
+                         ["beep", "-f", "880", "-l", "120"]]:
+                try:
+                    if subprocess.run(cmd, stdout=subprocess.DEVNULL,
+                                      stderr=subprocess.DEVNULL, timeout=1).returncode == 0:
+                        break
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+def _send_desktop_notification(title: str, body: str):
+    """Send an OS desktop notification (best-effort)."""
+    try:
+        if _PLATFORM == "Windows":
+            # Windows 10+ toast via PowerShell
+            ps = (
+                f"[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] | Out-Null; "
+                f"$t = [Windows.UI.Notifications.ToastTemplateType]::ToastText02; "
+                f"$xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent($t); "
+                f"$xml.GetElementsByTagName('text')[0].AppendChild($xml.CreateTextNode('{title}')) | Out-Null; "
+                f"$xml.GetElementsByTagName('text')[1].AppendChild($xml.CreateTextNode('{body}')) | Out-Null; "
+                f"$toast = [Windows.UI.Notifications.ToastNotification]::new($xml); "
+                f"[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('WatchGuard AI').Show($toast);"
+            )
+            subprocess.Popen(["powershell", "-Command", ps],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        elif _PLATFORM == "Darwin":
+            script = f'display notification "{body}" with title "{title}"'
+            subprocess.Popen(["osascript", "-e", script],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            subprocess.Popen(["notify-send", "-t", "4000", "-i", "dialog-information",
+                               title, body],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
 
 
 def _accent_bar(parent, height=2):
@@ -127,6 +190,25 @@ class WatchGuardApp:
         self._grok_key_cache   = config.load_api_key("grok")
         self._claude_key_cache = config.load_api_key("claude")
 
+        # ── New feature state ─────────────────────────────────────────
+        # DND / Break mode
+        self._break_active      = False
+        self._break_end_time    = 0.0
+        self._break_timer_id    = None
+
+        # Focus streak
+        self._streak_start      = None      # time.time() when current watch streak began
+        self._best_streak_secs  = 0.0       # best streak this session
+        self._current_streak_secs = 0.0
+
+        # Daily goal
+        self.daily_goal_mins    = tk.IntVar(value=DEFAULT_DAILY_GOAL_MINS)
+        self._goal_watching_secs = 0.0      # accumulated watching time (not total session)
+
+        # Notifications & sound settings
+        self.enable_sound       = tk.BooleanVar(value=True)
+        self.enable_notif       = tk.BooleanVar(value=True)
+
         # Camera
         self.camera_frame   = None
         self.camera_running = False
@@ -140,6 +222,14 @@ class WatchGuardApp:
 
         self.build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+        # ── Keyboard shortcuts ────────────────────────────────────────
+        self.root.bind("<F5>",  lambda e: self.toggle_guard())
+        self.root.bind("<F6>",  lambda e: self._toggle_break())
+        self.root.bind("<F1>",  lambda e: self._show_tab("dashboard"))
+        self.root.bind("<F2>",  lambda e: self._show_tab("chat"))
+        self.root.bind("<F3>",  lambda e: self._show_tab("settings"))
+        self.root.bind("<Escape>", lambda e: self.root.focus_set())
 
     # ══════════════════════════════════════════════════════════════════
     #  UI
@@ -312,6 +402,62 @@ class WatchGuardApp:
                        selectcolor=config.BG_DARK,
                        activebackground=config.BG_MID).pack(anchor="w")
 
+        # Sound alert toggle
+        snd_f = tk.Frame(sf, bg=config.BG_MID); snd_f.pack(fill="x", pady=3)
+        tk.Checkbutton(snd_f, text="Sound alert on away",
+                       variable=self.enable_sound,
+                       font=FONT_SMALL,
+                       bg=config.BG_MID, fg=config.FG,
+                       selectcolor=config.BG_DARK,
+                       activebackground=config.BG_MID).pack(anchor="w")
+
+        # Desktop notifications toggle
+        ntf_f = tk.Frame(sf, bg=config.BG_MID); ntf_f.pack(fill="x", pady=3)
+        tk.Checkbutton(ntf_f, text="Desktop notifications",
+                       variable=self.enable_notif,
+                       font=FONT_SMALL,
+                       bg=config.BG_MID, fg=config.FG,
+                       selectcolor=config.BG_DARK,
+                       activebackground=config.BG_MID).pack(anchor="w")
+
+        _sep(p)
+
+        # ── Daily Goal ────────────────────────────────────────────────
+        _section_label(p, "DAILY WATCH GOAL")
+        gf = tk.Frame(p, bg=config.BG_MID)
+        gf.pack(padx=12, pady=(0, 4), fill="x")
+        self._slider(gf, "Goal (minutes)", self.daily_goal_mins, 10, 240)
+        goal_bar_bg = tk.Frame(gf, bg=config.BG_DARK, height=10)
+        goal_bar_bg.pack(fill="x", pady=(2, 0))
+        goal_bar_bg.pack_propagate(False)
+        self.goal_bar_fill = tk.Frame(goal_bar_bg, bg=config.ACCENT, width=0)
+        self.goal_bar_fill.place(x=0, y=0, relheight=1.0, width=0)
+        self.goal_bar_lbl = tk.Label(gf, text="0 / 60 min  (0%)",
+                                      font=FONT_SMALL, bg=config.BG_MID, fg=config.MUTED)
+        self.goal_bar_lbl.pack(anchor="w")
+        self._goal_bar_bg = goal_bar_bg   # keep ref for width calc
+
+        _sep(p)
+
+        # ── Focus Streak ──────────────────────────────────────────────
+        _section_label(p, "FOCUS STREAK")
+        streak_f = tk.Frame(p, bg=config.BG_MID)
+        streak_f.pack(padx=12, pady=(0, 4), fill="x")
+        streak_row = tk.Frame(streak_f, bg=config.BG_MID)
+        streak_row.pack(fill="x")
+        tk.Label(streak_row, text="Current:", font=FONT_SMALL,
+                 bg=config.BG_MID, fg=config.MUTED).pack(side="left")
+        self.streak_cur_lbl = tk.Label(streak_row, text="—",
+                                        font=FONT_SMALL_B,
+                                        bg=config.BG_MID, fg=config.ACCENT)
+        self.streak_cur_lbl.pack(side="left", padx=(4, 16))
+        tk.Label(streak_row, text="Best:", font=FONT_SMALL,
+                 bg=config.BG_MID, fg=config.MUTED).pack(side="left")
+        self.streak_best_lbl = tk.Label(streak_row, text="—",
+                                         font=FONT_SMALL_B,
+                                         bg=config.BG_MID, fg=config.PURPLE)
+        self.streak_best_lbl.pack(side="left", padx=4)
+
         _sep(p)
 
         bf2 = tk.Frame(p, bg=config.BG_MID)
@@ -325,6 +471,20 @@ class WatchGuardApp:
             activeforeground=config.BG_DARK,
             command=self.toggle_guard, height=2)
         self.start_btn.pack(fill="x", pady=(0, 6))
+
+        # ── Break / DND button ────────────────────────────────────────
+        self.break_btn = tk.Button(
+            bf2, text="☕  TAKE A BREAK  (5 min)",
+            font=FONT_SMALL_B,
+            bg=config.BG_DARK, fg=config.MUTED,
+            relief="flat", cursor="hand2",
+            activebackground=config.BG_MID,
+            command=self._toggle_break)
+        self.break_btn.pack(fill="x", pady=(0, 4))
+        self.break_countdown_lbl = tk.Label(
+            bf2, text="", font=FONT_SMALL,
+            bg=config.BG_MID, fg=config.YELLOW)
+        self.break_countdown_lbl.pack(anchor="w")
 
         btn_row = tk.Frame(bf2, bg=config.BG_MID); btn_row.pack(fill="x")
         tk.Button(btn_row, text="💾  Export CSV",
@@ -403,6 +563,23 @@ class WatchGuardApp:
         self.stat_pauses  = self._stat(sr, "BREAKS",  "0")
         self.stat_score   = self._stat(sr, "FOCUS",   "100%")
 
+        # ── Goal progress bar in dashboard ────────────────────────────
+        gbar_frame = tk.Frame(p, bg=config.BG_MID)
+        gbar_frame.pack(fill="x", padx=16, pady=(0, 6))
+        goal_hdr = tk.Frame(gbar_frame, bg=config.BG_MID)
+        goal_hdr.pack(fill="x", padx=10, pady=(6, 2))
+        tk.Label(goal_hdr, text="◈  DAILY GOAL",
+                 font=("Courier New", 7, "bold"),
+                 bg=config.BG_MID, fg=config.MUTED).pack(side="left")
+        self.dash_goal_lbl = tk.Label(goal_hdr, text="0 / 60 min",
+                                       font=("Courier New", 7, "bold"),
+                                       bg=config.BG_MID, fg=config.ACCENT)
+        self.dash_goal_lbl.pack(side="right")
+        dash_goal_bg = tk.Canvas(gbar_frame, bg=config.BG_DARK,
+                                  height=8, highlightthickness=0)
+        dash_goal_bg.pack(fill="x", padx=10, pady=(0, 6))
+        self._dash_goal_canvas = dash_goal_bg
+
         # Smart-pause status (grace / ducking)
         self.smart_status_lbl = tk.Label(
             p, text="",
@@ -475,6 +652,7 @@ class WatchGuardApp:
 
         self._log("system", "WatchGuard AI v4 ready.")
         self._log("info",   "Install the browser extension → open YouTube/Netflix → bridge auto-connects.")
+        self._log("info",   "Shortcuts: F5 Start/Stop · F6 Break · F1–F3 Tabs")
 
     # ── Chat tab ──────────────────────────────────────────────────────
 
@@ -546,6 +724,8 @@ class WatchGuardApp:
             ("💡 Tips",        "Give me tips to stay more focused while watching."),
             ("❓ How it works","Explain how WatchGuard AI detects if I'm watching."),
             ("🧠 Gaze info",   "What is gaze estimation and how does WatchGuard use it?"),
+            ("🎯 Goal advice", "Based on my session data, how am I doing toward my watching goal? Any advice?"),
+            ("🔥 Streak tips", "I want to improve my focus streak. What can I do?"),
         ]:
             tk.Button(
                 qp_frame, text=label,
@@ -554,6 +734,10 @@ class WatchGuardApp:
                 activebackground=config.BG_DARK,
                 command=lambda pr=prompt: self._send_quick(pr)
             ).pack(side="left", padx=(0, 6), pady=2)
+
+        # Keyboard shortcuts hint
+        tk.Label(p, text="Shortcuts: F5 Start/Stop · F6 Break · F1 Dashboard · F2 Chat · F3 Settings",
+                 font=FONT_SMALL, bg=config.BG_DARK, fg=config.MUTED).pack(pady=(0, 4))
 
         self._chat_append("sys",
             "WatchGuard v4 Assistant — now with gaze + blink + head-pose tracking.\n"
@@ -639,6 +823,35 @@ class WatchGuardApp:
                  font=FONT_SMALL, bg=config.BG_MID, fg=config.MUTED,
                  justify="left").pack(anchor="w", padx=12, pady=(0, 12))
 
+        _sep(p)
+
+        kb_frame = tk.Frame(p, bg=config.BG_MID)
+        kb_frame.pack(fill="x", padx=16, pady=(0, 12))
+        _section_label_inline(kb_frame, "KEYBOARD SHORTCUTS")
+        shortcuts = [
+            ("F5", "Start / Stop Guard"),
+            ("F6", "Take a Break (DND toggle)"),
+            ("F1", "Dashboard tab"),
+            ("F2", "AI Chat tab"),
+            ("F3", "Settings tab"),
+        ]
+        for key, desc in shortcuts:
+            row = tk.Frame(kb_frame, bg=config.BG_MID)
+            row.pack(fill="x", padx=12, pady=1)
+            tk.Label(row, text=key, font=FONT_MONO_B, width=6,
+                     bg=config.BG_DARK, fg=config.CYAN,
+                     relief="flat", padx=4).pack(side="left")
+            tk.Label(row, text=f"  {desc}", font=FONT_SMALL,
+                     bg=config.BG_MID, fg=config.FG).pack(side="left")
+
+        # Break duration picker
+        _sep(p)
+        brk_frame = tk.Frame(p, bg=config.BG_MID)
+        brk_frame.pack(fill="x", padx=16, pady=(0, 12))
+        _section_label_inline(brk_frame, "BREAK DURATION")
+        self.break_dur_var = tk.IntVar(value=5)
+        self._slider(brk_frame, "Break length (minutes)", self.break_dur_var, 1, 30)
+
     # ══════════════════════════════════════════════════════════════════
     #  GUARD LOGIC
     # ══════════════════════════════════════════════════════════════════
@@ -665,6 +878,12 @@ class WatchGuardApp:
         self._hard_pause_pending  = False
         self._volume_ducking      = False
         self._resume_cooldown_end = 0.0
+        # New feature resets
+        self._break_active        = False
+        self._streak_start        = time.time()
+        self._best_streak_secs    = 0.0
+        self._current_streak_secs = 0.0
+        self._goal_watching_secs  = 0.0
         self.cam_label.config(height=300)
         self.start_btn.config(text="⏹  STOP GUARD", bg=config.RED, fg="white",
                               activebackground="#cc4460")
@@ -687,7 +906,8 @@ class WatchGuardApp:
         self.start_btn.config(text="▶  START GUARD", bg=config.ACCENT,
                               fg=config.BG_DARK, activebackground="#5de89e")
         self._log("system",
-            f"⏹ Done — {fmt_time(elapsed)} | Focus {focus}% | {self.interruption_count} break(s)")
+            f"⏹ Done — {fmt_time(elapsed)} | Focus {focus}% | "
+            f"{self.interruption_count} break(s) | Best streak {fmt_time(self._best_streak_secs)}")
         if self.logger.away_events:
             path = self.logger.save_session()
             self._log("info", f"📄 Saved → {path}")
@@ -735,6 +955,7 @@ class WatchGuardApp:
           
         Volume ducking fires during HARD_PENDING.
         Post-resume cooldown prevents re-pause immediately after returning.
+        Break/DND mode: detection suspended, video keeps playing.
         """
         cons_away  = 0
         cons_watch = 0
@@ -743,6 +964,13 @@ class WatchGuardApp:
         while self.is_running:
             t0 = time.time()
             ms = self.check_interval.get()
+
+            # ── Break / DND mode: skip detection ──────────────────────
+            if self._break_active:
+                if time.time() >= self._break_end_time:
+                    self.root.after(0, self._end_break)
+                time.sleep(ms / 1000)
+                continue
 
             if self.camera_frame is None:
                 time.sleep(ms / 1000)
@@ -782,6 +1010,16 @@ class WatchGuardApp:
                 self.root.after(0, lambda: self.warn_lbl.config(text=""))
                 self.root.after(0, lambda: self.smart_status_lbl.config(text=""))
 
+                # ── Streak tracking ────────────────────────────────────
+                if self._streak_start is None:
+                    self._streak_start = time.time()
+                else:
+                    self._current_streak_secs = time.time() - self._streak_start
+                    if self._current_streak_secs > self._best_streak_secs:
+                        self._best_streak_secs = self._current_streak_secs
+                # ── Goal tracking ─────────────────────────────────────
+                self._goal_watching_secs += ms / 1000.0
+
                 # Cancel any pending grace / duck
                 self._soft_warning_active = False
                 self._hard_pause_pending  = False
@@ -796,6 +1034,10 @@ class WatchGuardApp:
             else:
                 cons_watch = 0
                 cons_away += 1
+                # Break streak when away
+                self._streak_start = None
+                self._current_streak_secs = 0.0
+
                 self.root.after(0, lambda: self.face_lbl.config(
                     text="○  Away", fg=config.RED))
 
@@ -834,6 +1076,9 @@ class WatchGuardApp:
                     self.root.after(0, lambda: self.warn_lbl.config(text=""))
                     self.root.after(0, lambda: self.smart_status_lbl.config(
                         text="", fg=config.YELLOW))
+                    # Sound alert
+                    if self.enable_sound.get():
+                        threading.Thread(target=_play_beep, daemon=True).start()
                     self.root.after(0, self._on_away)
 
             time.sleep(max(0, ms / 1000 - (time.time() - t0)))
@@ -884,6 +1129,14 @@ class WatchGuardApp:
 
         self.logger.log_away(pos, self.away_start_time)
         self._add_tl("away")
+        # Desktop notification
+        if self.enable_notif.get():
+            pos_s2 = fmt_video(pos) if pos is not None else ""
+            threading.Thread(
+                target=_send_desktop_notification,
+                args=("WatchGuard AI — Paused",
+                      f"You looked away{(' at ' + pos_s2) if pos_s2 else ''}. Video paused."),
+                daemon=True).start()
 
     def _on_returned(self, real_away_secs):
         self._update_status("watching")
@@ -913,6 +1166,13 @@ class WatchGuardApp:
         self._add_tl("watching")
         if closed and self.mode.get() == "log":
             self.root.after(0, self._refresh_resume)
+        # Desktop notification on return
+        if self.enable_notif.get():
+            threading.Thread(
+                target=_send_desktop_notification,
+                args=("WatchGuard AI — Welcome back!",
+                      f"Resumed. You were away for {fmt_time(real_away_secs)}."),
+                daemon=True).start()
 
     # ── Resume panel ──────────────────────────────────────────────────
 
@@ -967,6 +1227,67 @@ class WatchGuardApp:
                else f"[{ts}] ⚠ Seek failed → forced PLAY")
         self.root.after(0, lambda: self._log("resume" if ok else "away", msg))
 
+    # ── Break / DND Mode ──────────────────────────────────────────────
+
+    def _toggle_break(self):
+        if not self.is_running:
+            messagebox.showinfo("Guard Not Running",
+                "Start the guard first before taking a break.")
+            return
+        if self._break_active:
+            self._end_break()
+        else:
+            self._start_break()
+
+    def _start_break(self):
+        dur_secs = getattr(self, "break_dur_var", None)
+        mins = dur_secs.get() if dur_secs else 5
+        secs = mins * 60
+        self._break_active   = True
+        self._break_end_time = time.time() + secs
+        self.break_btn.config(
+            text=f"⏹  END BREAK EARLY",
+            bg=config.YELLOW, fg=config.BG_DARK)
+        self._log("system",
+            f"[{datetime.now().strftime('%H:%M:%S')}] ☕ Break started ({mins} min) — detection paused")
+        if self.enable_notif.get():
+            threading.Thread(
+                target=_send_desktop_notification,
+                args=("WatchGuard AI — Break Started",
+                      f"Detection paused for {mins} minutes. Enjoy your break!"),
+                daemon=True).start()
+        self._update_break_countdown()
+
+    def _end_break(self):
+        self._break_active = False
+        self._break_end_time = 0.0
+        self.break_btn.config(
+            text="☕  TAKE A BREAK  (5 min)",
+            bg=config.BG_DARK, fg=config.MUTED)
+        self.break_countdown_lbl.config(text="")
+        self._log("system",
+            f"[{datetime.now().strftime('%H:%M:%S')}] ▶ Break ended — detection resumed")
+        if self.enable_notif.get():
+            threading.Thread(
+                target=_send_desktop_notification,
+                args=("WatchGuard AI — Break Over",
+                      "Welcome back! Detection resumed."),
+                daemon=True).start()
+
+    def _update_break_countdown(self):
+        if not self._break_active or not self.is_running:
+            return
+        remaining = max(0, self._break_end_time - time.time())
+        if remaining <= 0:
+            self._end_break()
+            return
+        mins = int(remaining) // 60
+        secs = int(remaining) % 60
+        self.break_countdown_lbl.config(
+            text=f"⏱ {mins:02d}:{secs:02d} remaining",
+            fg=config.YELLOW)
+        self.root.after(1000, self._update_break_countdown)
+
     # ── Bridge status ──────────────────────────────────────────────────
 
     def _on_bridge_status(self, connected: bool):
@@ -998,6 +1319,48 @@ class WatchGuardApp:
             col = (config.GREEN if focus >= 70
                    else config.YELLOW if focus >= 40 else config.RED)
             self.stat_score.config(text=f"{focus}%", fg=col)
+
+            # ── Streak labels ──────────────────────────────────────────
+            cur_s = self._current_streak_secs
+            best_s = self._best_streak_secs
+            self.streak_cur_lbl.config(
+                text=fmt_time(cur_s) if cur_s > 0 else "—")
+            self.streak_best_lbl.config(
+                text=fmt_time(best_s) if best_s > 0 else "—")
+
+            # ── Daily goal bar ─────────────────────────────────────────
+            goal_mins = self.daily_goal_mins.get()
+            goal_secs = goal_mins * 60
+            watch_mins = int(self._goal_watching_secs // 60)
+            pct = min(1.0, self._goal_watching_secs / max(goal_secs, 1))
+            pct_int = int(pct * 100)
+            goal_color = config.GREEN if pct >= 1.0 else config.ACCENT
+            self.goal_bar_lbl.config(
+                text=f"{watch_mins} / {goal_mins} min  ({pct_int}%)",
+                fg=goal_color)
+            # Dashboard goal bar canvas
+            try:
+                cw = self._dash_goal_canvas.winfo_width() or 400
+                self._dash_goal_canvas.delete("all")
+                self._dash_goal_canvas.create_rectangle(
+                    0, 0, cw, 8, fill=config.BG_DARK, outline="")
+                fill_w = max(0, int(cw * pct))
+                if fill_w > 0:
+                    self._dash_goal_canvas.create_rectangle(
+                        0, 0, fill_w, 8, fill=goal_color, outline="")
+                self.dash_goal_lbl.config(
+                    text=f"{watch_mins} / {goal_mins} min",
+                    fg=goal_color)
+            except Exception:
+                pass
+            # Sidebar goal bar
+            try:
+                bw = self._goal_bar_bg.winfo_width() or 280
+                fill_w2 = max(0, int(bw * pct))
+                self.goal_bar_fill.place(x=0, y=0, relheight=1.0, width=fill_w2)
+            except Exception:
+                pass
+
         self.root.after(1000, self._stats_loop)
 
     # ── Timeline ───────────────────────────────────────────────────────
@@ -1178,10 +1541,16 @@ class WatchGuardApp:
             f"Break count:       {self.interruption_count}",
             f"Focus score:       {focus}%",
             f"Current status:    {self.current_status}",
+            f"Break mode active: {self._break_active}",
             f"Gaze direction:    {self.detector.get_gaze_direction()}",
             f"Head angles:       yaw={self.detector.get_head_angles()[1]:.0f}° "
             f"pitch={self.detector.get_head_angles()[0]:.0f}°",
             f"Attention score:   {self.detector.get_attention_score():.2f}",
+            f"Best focus streak: {fmt_time(self._best_streak_secs)}",
+            f"Current streak:    {fmt_time(self._current_streak_secs)}",
+            f"Daily goal:        {self.daily_goal_mins.get()} min "
+            f"({int(self._goal_watching_secs // 60)} min watched, "
+            f"{min(100, int(self._goal_watching_secs / max(self.daily_goal_mins.get() * 60, 1) * 100))}% done)",
         ]
         if pos is not None:
             lines.append(f"Video position:    {fmt_video(pos)} / {fmt_video(dur)}")
